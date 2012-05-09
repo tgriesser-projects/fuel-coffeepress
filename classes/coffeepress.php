@@ -3,6 +3,7 @@
 namespace Coffeepress;
 
 use Config;
+
 use Assetic\AssetManager;
 use Assetic\FilterManager;
 use Assetic\Asset\FileAsset;
@@ -19,17 +20,27 @@ class CoffeepressException extends \FuelException{}
 class Coffeepress extends \Fuel\Core\View
 {
 	/**
-	 * Template
+	 * Location of relative assets & template
+	 */
+	public $base_dir = null;
+
+	/**
+	 * Where the item is to be saved (from config)
+	 */
+	public $output_dir = null;
+
+	/**
+	 * Template name ('full name')
 	 */
 	public $template = null;
 
 	/**
-	 * Compiled
+	 * Whether to use Google-Closure compiler in output
 	 */
 	public $compiled = false;
 
 	/**
-	 * Compiled
+	 * Whether to use the top-level function wrapper
 	 */
 	public $bare = true;
 
@@ -37,6 +48,11 @@ class Coffeepress extends \Fuel\Core\View
 	 * Depth
 	 */
 	public $depth = 3;
+
+	/**
+	 * Final rendered output
+	 */
+	protected $rendered;
 
 	/**
 	 * Directory path to the current template
@@ -62,10 +78,21 @@ class Coffeepress extends \Fuel\Core\View
 	 * @param string - absolute path to the current directory
 	 * @param string - file we're using for execution
 	 */
-	public static function forge($template = false, $base_dir = false, $null = null)
+	public static function forge($item = false, $stub = null, $null = null)
 	{
-		$base_dir = $base_dir ? : Config::get('coffeepress.base_dir');
-		return new static($template, $base_dir);
+		if ( ! is_array($item))
+		{
+			$item = Config::get('coffeepress.output.'.$item, $item);
+		}
+
+		if (is_array($item))
+		{
+			return new static($item, $stub, $null);
+		}
+		else
+		{
+			throw new CoffeepressException('Error initializing ' . $item);
+		}
 	}
 
 	/**
@@ -96,6 +123,7 @@ class Coffeepress extends \Fuel\Core\View
 	public function depth($set)
 	{
 		$this->depth = $set;
+		return $this;
 	}
 
 	/**
@@ -103,12 +131,15 @@ class Coffeepress extends \Fuel\Core\View
 	 * @param string - absolute path to the current directory
 	 * @param string - file we're using for execution
 	 */
-	public function __construct($template, $path)
+	public function __construct($item, $stub, $null)
 	{
-		$this->template = $template;
-		$this->active_path = $path;
-		$this->compiled = Config::get('coffeepress.compiled');
-		$this->bare = Config::get('coffeepress.bare');
+		$this->base_dir = Config::get('coffeepress.base_dir');
+		
+		foreach ($item as $k => $v)
+		{
+				$this->$k = $v;
+		}
+
 		array_push(static::$stack, $this);
 	}
 
@@ -122,11 +153,18 @@ class Coffeepress extends \Fuel\Core\View
 
   	$ext = isset($args[1]) ? $args[1] : '.coffee';
 
-  	if (is_dir($current->active_path . $name))
+  	if (is_dir($current->base_dir . $name))
   	{
   		if ( ! is_array($args[0]))
   		{
-  			echo PHP_EOL . static::resolve_path($args, $name, $ext) . PHP_EOL;
+  			if (substr($tmpl, -1) === '*')
+				{
+					static::resolve_star($tmpl, $name);
+				}
+				else
+				{
+  				echo static::resolve_path($args, $name, $ext) . PHP_EOL;
+  			}
   		}
   		else
   		{
@@ -138,7 +176,7 @@ class Coffeepress extends \Fuel\Core\View
   	}
   	else
   	{
-  		throw new CoffeeException('Error finding method/directory ' . $name);
+  		throw new CoffeepressException('Error finding method/directory ' . $name);
   	}
 	}
 
@@ -157,7 +195,12 @@ class Coffeepress extends \Fuel\Core\View
 	 */
 	public function render($run_checks = false)
 	{
-		$output = static::process_file($this->active_path . $this->template);
+		if ($this->rendered)
+		{
+			return $this->rendered;
+		}
+
+		$output = static::process_file($this->base_dir . $this->template);
 		
 		if ($this->depth === 0)
 		{
@@ -166,9 +209,23 @@ class Coffeepress extends \Fuel\Core\View
 
 		$coffeescript = new StringAsset($output, array(
 			new CoffeeScriptFilter(Config::get('coffeepress.coffee_bin'), Config::get('coffeepress.node_bin'), true)
-		));
+		));	
+	
+		try
+		{
+			$coffeescript = $coffeescript->dump();
+		}
+		catch (\Exception $e)
+		{
+			echo PHP_EOL . '<pre><code>' . PHP_EOL;
+			echo $e->getMessage();
+			echo PHP_EOL . '</code></pre>' . PHP_EOL;
 
-		$coffeescript = $coffeescript->dump();
+			echo PHP_EOL . '<pre><code>' . PHP_EOL;
+			echo $output;
+			echo PHP_EOL . '</code></pre>' . PHP_EOL;
+			die;
+		}
 
 		if ($this->depth === 1)
 		{
@@ -192,7 +249,7 @@ class Coffeepress extends \Fuel\Core\View
 		if ($this->compiled === true)
 		{
 			$compiled = new StringAsset($final, array(
-				new GoogleClosure\CompilerJarFilter(APPPATH . 'vendor/google-closure/compiler.jar')
+				new GoogleClosure\CompilerJarFilter(\Config::get('coffeepress.closure_jar'))
 			));
 			$final = $compiled->dump();
 		}
@@ -211,25 +268,89 @@ class Coffeepress extends \Fuel\Core\View
 	{
 		$that = self::current();
 
-		if ( ! is_null($dir) and file_exists($f = $that->active_path.$dir.'/'.$file.$ext))
+		if (stristr($file, '.') !== false)
 		{
-			return $that->process_file($f);
+			$ext = null;
 		}
-		elseif (file_exists($file))
+
+		if ( ! is_null($dir))
+		{
+			if (file_exists($f = $that->base_dir.$dir.'/'.$file.$ext) 
+				or file_exists($f = \Config::get('coffeepress.base_dir').$dir.'/'.$file.$ext))
+			{
+				return $that->process_file($f);
+			}
+		}
+		
+		if (file_exists($file))
 		{
 			return $that->process_file($file);
 		}
 		else
 		{
-			throw new CoffeeException('Path not resolved: ' .  $file . ' ' . $dir);
+			throw new CoffeepressException('Path not resolved: ' .  $file . ' ' . $dir);
 		}
 	}
 
+	/**
+	 * Resolve Star (directory paths)
+	 * note: star directories only work on relative paths to the root
+	 */
+	protected static function resolve_star($path, $type)
+	{
+		$that = static::current();
+		$fs = \File::read_dir($that->base_dir . $type . '/' . substr($path, 0, -1));
+
+		if ( ! empty($fs))
+		{
+			call_user_func(array('static', $type), static::key_collapse($fs));
+		}
+	}
+
+	/**
+	 * Checks if the array's keys/sub-keys aren't (int)...
+	 * if so it adds them to a stack of collapsed keys
+	 * @param array
+	 */
+	public static function key_collapse($array)
+	{
+		$stack = array();
+		$depth = array();
+		$collapse = function($val, $key, $func) use(&$stack, &$depth)
+		{
+			if ( ! is_int($key))
+			{
+				array_push($depth, $key);
+			}
+			else
+			{
+				array_push($depth, $val);
+			}
+			if (is_array($val))
+			{
+				array_walk($val, $func, $func);
+			}
+			else
+			{
+				$stack[] = implode($depth);
+			}
+			array_pop($depth);
+		};
+		
+		array_walk($array, $collapse, $collapse);
+		
+		return $stack;
+	}
+
+
+	/**
+	 * Process the file, replacing the tabs with double spaces for consistency
+	 */
 	protected function process_file($file_override = false)
 	{
 		return str_replace("\t", "  ", parent::process_file($file_override));
-
 	}
+
 	/**
 	 * Creates underscore.js "_.mixins"
 	 * allowing for a simple/consistent
@@ -242,19 +363,26 @@ class Coffeepress extends \Fuel\Core\View
 		
 		if ( ! is_array($mixins))
 		{
-			$html = static::resolve_path($mixins, 'mixins');
-			
-			if (is_null($key))
+			if (substr($mixins, -1) === '*')
 			{
-				echo $html;
-			}
-			elseif ($key > 0)
-			{
-				return PHP_EOL . preg_replace("#_.mixin#", '', $html) . PHP_EOL;
+				static::resolve_star($tmpl, 'mixins');
 			}
 			else
 			{
-				return PHP_EOL . $html . PHP_EOL;
+				$html = static::resolve_path($mixins, 'mixins');
+				
+				if (is_null($key))
+				{
+					echo $html;
+				}
+				elseif ($key > 0)
+				{
+					return PHP_EOL . preg_replace("#_.mixin#", '', $html) . PHP_EOL;
+				}
+				else
+				{
+					return PHP_EOL . $html . PHP_EOL;
+				}
 			}
 		}
 		else
@@ -277,14 +405,22 @@ class Coffeepress extends \Fuel\Core\View
 	{
 		if ( ! is_array($tmpl))
 		{
-			$html = static::resolve_path($tmpl, 'templates', '.jst');
-			$template = <<<COFFEE
+			if (substr($tmpl, -1) === '*')
+			{
+				static::resolve_star($tmpl, 'templates');
+			}
+			else
+			{
+				$tmpl = str_replace('.jst', '', $tmpl);
+				$html = static::resolve_path($tmpl, 'templates', '.jst');
+				$template = <<<COFFEE
 Templates = do (tmpl = Templates or {}) ->
 	tmpl['$tmpl'] = _.template("""$html""")
 	tmpl
 COFFEE;
-			$template .= PHP_EOL;
-			echo $template;
+				$template .= PHP_EOL;
+				echo $template;
+			}
 		}
 		else
 		{
@@ -334,6 +470,11 @@ COFFEE;
 	 */
 	protected function save($dir = 'output', $output_dir = false)
 	{
+		if ( ! $this->rendered)
+		{
+			$this->rendered = $this->render();
+		}
+
 		$output_dir = $output_dir?:DOCROOT .'scripts/';
 		$action = ! file_exists($output_dir . $app . '.js') ? 'create' : 'update';
 		$source = \View::forge('js/'.$app.'.js', array(
@@ -343,11 +484,14 @@ COFFEE;
 		\File::$action(
 			$output_dir,
 			$app . '.js',
-			$source
+			$this->rendered
 		);
 
-		return 'Generated Scripts';
+		return $this;
 	}
 }
 
+/**
+ * Short syntax for the Coffeepress extension
+ */
 class Coffee extends Coffeepress {}
