@@ -257,7 +257,7 @@ class Coffeepress extends \Fuel\Core\View
 		if ($this->compiled === true)
 		{
 			$compiled = new StringAsset($final, array(
-				new GoogleClosure\CompilerJarFilter(\Config::get('coffeepress.closure_jar'))
+				new GoogleClosure\CompilerJarFilter(\Config::get('coffeepress.closure_jar'), Config::get('coffeepress.java_bin'))
 			));
 			$final = $compiled->dump();
 		}
