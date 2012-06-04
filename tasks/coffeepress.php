@@ -13,9 +13,16 @@ namespace Fuel\Tasks;
  */
 class Coffeepress
 {
-	public static function run($public_path = 'public')
+	public static function run($item = null)
 	{
-		
+		if (is_null($item))
+		{
+			\Cli::write('Please specify a file to build');
+		}
+		else
+		{
+			\Cli::write(\Coffee::forge($item)->save());
+		}
 	}
 
 	public static function check($template_name)

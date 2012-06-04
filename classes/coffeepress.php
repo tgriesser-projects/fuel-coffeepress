@@ -30,6 +30,11 @@ class Coffeepress extends \Fuel\Core\View
 	public $output_dir = null;
 
 	/**
+	 * Name of the output to be saved
+	 */
+	public $output_file = null;
+
+	/**
 	 * Template name ('full name')
 	 */
 	public $template = null;
@@ -153,17 +158,17 @@ class Coffeepress extends \Fuel\Core\View
 
   	$ext = isset($args[1]) ? $args[1] : '.coffee';
 
-  	if (is_dir($current->base_dir . $name))
+  	try
   	{
   		if ( ! is_array($args[0]))
   		{
-  			if (substr($tmpl, -1) === '*')
+  			if (substr($args[0], -1) === '*')
 				{
-					static::resolve_star($tmpl, $name);
+					static::resolve_star($args[0], $name);
 				}
 				else
 				{
-  				echo static::resolve_path($args, $name, $ext) . PHP_EOL;
+  				echo static::resolve_path($args[0], $name, $ext) . PHP_EOL;
   			}
   		}
   		else
@@ -174,7 +179,7 @@ class Coffeepress extends \Fuel\Core\View
   			}
   		}
   	}
-  	else
+  	catch (Exception $e)
   	{
   		throw new CoffeepressException('Error finding method/directory ' . $name);
   	}
@@ -195,11 +200,6 @@ class Coffeepress extends \Fuel\Core\View
 	 */
 	public function render($run_checks = false)
 	{
-		if ($this->rendered)
-		{
-			return $this->rendered;
-		}
-
 		$output = static::process_file($this->base_dir . $this->template);
 		
 		if ($this->depth === 0)
@@ -217,14 +217,22 @@ class Coffeepress extends \Fuel\Core\View
 		}
 		catch (\Exception $e)
 		{
-			echo PHP_EOL . '<pre><code>' . PHP_EOL;
-			echo $e->getMessage();
-			echo PHP_EOL . '</code></pre>' . PHP_EOL;
+			if (\Fuel::$is_cli)
+			{
+				\Cli::write(\Cli::color($e->getMessage(), 'red'));
+				die;
+			}
+			else
+			{
+				echo PHP_EOL . '<pre><code>' . PHP_EOL;
+				echo $e->getMessage();
+				echo PHP_EOL . '</code></pre>' . PHP_EOL;
 
-			echo PHP_EOL . '<pre><code>' . PHP_EOL;
-			echo $output;
-			echo PHP_EOL . '</code></pre>' . PHP_EOL;
-			die;
+				echo PHP_EOL . '<pre><code>' . PHP_EOL;
+				echo $output;
+				echo PHP_EOL . '</code></pre>' . PHP_EOL;
+				die;
+			}
 		}
 
 		if ($this->depth === 1)
@@ -413,13 +421,7 @@ class Coffeepress extends \Fuel\Core\View
 			{
 				$tmpl = str_replace('.jst', '', $tmpl);
 				$html = static::resolve_path($tmpl, 'templates', '.jst');
-				$template = <<<COFFEE
-Templates = do (tmpl = Templates or {}) ->
-	tmpl['$tmpl'] = _.template("""$html""")
-	tmpl
-COFFEE;
-				$template .= PHP_EOL;
-				echo $template;
+				echo 'Templates[\''.$tmpl.'\'] = _.template("""'.$html.'""")' . PHP_EOL;
 			}
 		}
 		else
@@ -430,6 +432,38 @@ COFFEE;
 			}	
 		}
 	}
+
+	/*
+	 * Because templates should be very modular,
+	 * they use the module pattern
+	 * @param string|array
+	 * @return string
+	 
+	public static function pages($page)
+	{
+		if ( ! is_array($page))
+		{
+			if (substr($page, -1) === '*')
+			{
+				static::resolve_star($page, 'pages');
+			}
+			else
+			{
+				$page = str_replace('.coffee', '', $page);
+				$coffee = static::resolve_path($page, 'pages', '.coffee');
+				$coffee = preg_replace("/\n/","\n  ", $coffee);
+				echo "Pages['$page'] = " . $coffee . PHP_EOL;
+			}
+		}
+		else
+		{
+			foreach ($page as $pg)
+			{
+				static::pages($pg);
+			}	
+		}
+	}
+	*/
 
 	/**
 	 * Raw dump the script after the coffeescript is compiled
@@ -468,26 +502,28 @@ COFFEE;
 	 * @param string
 	 * @return null
 	 */
-	protected function save($dir = 'output', $output_dir = false)
+	public function save($path = false, $file = false)
 	{
-		if ( ! $this->rendered)
+		$this->output_dir = $path ? : $this->output_dir;
+		$this->output_file = $file ? : $this->output_file;
+		
+		if (is_null($this->output_dir) or is_null($this->output_file))
 		{
-			$this->rendered = $this->render();
+			\Cli::write('Error finding the output directory');
+			\Cli::write(print_r($this, true));
+			die;
 		}
 
-		$output_dir = $output_dir?:DOCROOT .'scripts/';
-		$action = ! file_exists($output_dir . $app . '.js') ? 'create' : 'update';
-		$source = \View::forge('js/'.$app.'.js', array(
-			'scripts'   => $this->dev_scripts(),
-		), false);
+		$action = ! file_exists($this->output_dir . $this->output_file) ? 'create' : 'update';
+		$output = $this->render();
 
 		\File::$action(
-			$output_dir,
-			$app . '.js',
-			$this->rendered
+			$this->output_dir,
+			$this->output_file,
+			$output
 		);
 
-		return $this;
+		return 'Saved: ' . $this->output_dir . $this->output_file;
 	}
 }
 
