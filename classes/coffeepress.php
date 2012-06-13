@@ -308,7 +308,7 @@ class Coffeepress extends \Fuel\Core\View
 	{
 		$that = static::current();
     
-		if (is_dir($f = $that->base_dir . $type . '/' . substr($path, 0, -1))
+		if (is_dir($f = $that->base_dir . $type . '/' . substr($path, 0, -1)))
 		{
 			$fs = \File::read_dir($f);
 
