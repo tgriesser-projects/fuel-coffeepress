@@ -307,12 +307,16 @@ class Coffeepress extends \Fuel\Core\View
 	protected static function resolve_star($path, $type)
 	{
 		$that = static::current();
-		$fs = \File::read_dir($that->base_dir . $type . '/' . substr($path, 0, -1));
-
-		if ( ! empty($fs))
+    
+		if (is_dir($f = $that->base_dir . $type . '/' . substr($path, 0, -1))
 		{
-			call_user_func(array('static', $type), static::key_collapse($fs));
-		}
+			$fs = \File::read_dir($f);
+
+			if ( ! empty($fs))
+			{
+				call_user_func(array('static', $type), static::key_collapse($fs));
+			}
+    }
 	}
 
 	/**
