@@ -10,6 +10,7 @@ use Assetic\Asset\FileAsset;
 use Assetic\Asset\StringAsset;
 use Assetic\Filter\GoogleClosure;
 use Assetic\Filter\CoffeeScriptFilter;
+use Assetic\Filter\UglifyJsFilter;
 
 class CoffeepressException extends \FuelException{}
 
@@ -68,6 +69,11 @@ class Coffeepress extends \Fuel\Core\View
 	 * Scripts which are being compiled
 	 */
 	protected static $scripts = array();
+
+	/**
+	 * The type of compression used, either uglify or closure
+	 */
+	public $compression = 'uglify';
 
 	/**
 	 * Require the Assetic library
@@ -146,6 +152,22 @@ class Coffeepress extends \Fuel\Core\View
 		}
 
 		array_push(static::$stack, $this);
+	}
+
+	public function set_var($key, $value = null)
+	{
+		if (is_array($key))
+		{
+			foreach ($key as $k => $v)
+			{
+				call_user_func(array($this, 'set_var'), $k, $v);
+			}
+		}
+		else
+		{
+			$this->{$key} = $value;
+		}
+		return $this;
 	}
 
 	/**
@@ -256,9 +278,20 @@ class Coffeepress extends \Fuel\Core\View
 
 		if ($this->compiled === true)
 		{
-			$compiled = new StringAsset($final, array(
-				new GoogleClosure\CompilerJarFilter(\Config::get('coffeepress.closure_jar'), Config::get('coffeepress.java_bin'))
-			));
+			if ($this->compression === 'closure')
+			{
+				$compiled = new StringAsset($final, array(
+					new GoogleClosure\CompilerJarFilter(\Config::get('coffeepress.closure_jar'), Config::get('coffeepress.java_bin'))
+				));
+			
+			}
+			elseif ($this->compression === 'uglify')
+			{
+				$compiled = new StringAsset($final, array(
+					new UglifyJsFilter(\Config::get('coffeepress.uglify_bin'), Config::get('coffeepress.node_bin'))
+				));
+			}
+			
 			$final = $compiled->dump();
 		}
 
